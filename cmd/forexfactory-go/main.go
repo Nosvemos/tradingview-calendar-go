@@ -40,7 +40,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "forexfactory",
+	Use:   "forexfactory-go",
 	Short: "forexfactory-go: Premium Economic Calendar Downloader & Streamer",
 	Long: `forexfactory-go is a high-performance Go CLI and library designed to fetch, 
 stream, and analyze economic calendar data from Forex Factory concurrently.`,
@@ -79,7 +79,7 @@ func init() {
 	// Configure download command flags
 	downloadCmd.Flags().StringVarP(&startFlag, "start", "s", "", "Start date in YYYY-MM-DD format (Required)")
 	downloadCmd.Flags().StringVarP(&endFlag, "end", "e", "", "End date in YYYY-MM-DD format (Required)")
-	downloadCmd.Flags().StringVarP(&formatFlag, "format", "f", "json", "Output format: 'json' or 'csv'")
+	downloadCmd.Flags().StringVarP(&formatFlag, "format", "f", "json", "Output format: 'json', 'csv' or 'parquet'")
 	downloadCmd.Flags().StringVarP(&outputFlag, "output", "o", "", "Output file path (defaults to stdout)")
 	downloadCmd.Flags().StringVarP(&timezoneFlag, "timezone", "t", "", "Target timezone for event times (e.g. 'UTC', 'America/New_York')")
 	downloadCmd.Flags().IntVarP(&rateLimitFlag, "rate-limit", "r", 1, "Maximum HTTP requests per second allowed")
@@ -185,6 +185,20 @@ func executeDownload() {
 
 	filteredEvents := fetchEventsConcurrently(startDate, endDate, targetLoc)
 
+	format := strings.ToLower(strings.TrimSpace(formatFlag))
+	if format == "parquet" {
+		if outputFlag == "" {
+			log.Fatalf("Error: --output file path is required when exporting to parquet format")
+		}
+		if err := forexfactory.WriteParquet(outputFlag, filteredEvents); err != nil {
+			log.Fatalf("Error writing Parquet: %v", err)
+		}
+		if !silentFlag {
+			fmt.Fprintf(os.Stderr, "Successfully exported %d events to parquet.\n", len(filteredEvents))
+		}
+		return
+	}
+
 	// Format output destination
 	var out io.Writer = os.Stdout
 	if outputFlag != "" {
@@ -196,7 +210,6 @@ func executeDownload() {
 		out = f
 	}
 
-	format := strings.ToLower(strings.TrimSpace(formatFlag))
 	switch format {
 	case "csv":
 		if err := writeCSV(out, filteredEvents); err != nil {
@@ -207,7 +220,7 @@ func executeDownload() {
 			log.Fatalf("Error writing JSON: %v", err)
 		}
 	default:
-		log.Fatalf("Unknown output format %q: use 'json' or 'csv'", formatFlag)
+		log.Fatalf("Unknown output format %q: use 'json', 'csv' or 'parquet'", formatFlag)
 	}
 
 	if !silentFlag {
