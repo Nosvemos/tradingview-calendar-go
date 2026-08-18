@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Nosvemos/forexfactory-go/pkg/forexfactory"
+	"github.com/Nosvemos/forexcalendar-go/pkg/forexcalendar"
 	"github.com/spf13/cobra"
 )
 
@@ -30,17 +30,16 @@ var (
 	leadTimeFlag        time.Duration
 	minImpactFlag       string
 
-	// InMemory notified events cache to prevent double-alerts
 	notifiedCache = make(map[string]time.Time)
 	cacheMu       sync.Mutex
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "ff-notifier",
-	Short: "ff-notifier: Real-time Discord/Slack/Telegram Economic News Alert Daemon",
-	Long: `ff-notifier is an enterprise-grade economic calendar alert daemon that polls 
-the live Forex Factory XML feed and dispatches rich card alerts to Discord, Slack, Telegram, and generic webhooks 
-exactly 15 minutes (or customizable lead time) before high-impact economic news releases.`,
+	Use:   "fc-notifier",
+	Short: "fc-notifier: Real-time Discord/Slack/Telegram Economic News Alert Daemon",
+	Long: `fc-notifier is an economic calendar alert daemon that polls 
+the live economic feed and dispatches rich card alerts to Discord, Slack, Telegram, and generic webhooks 
+before high-impact macroeconomic news releases.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		executeNotifier()
 	},
@@ -50,8 +49,8 @@ func init() {
 	rootCmd.Flags().StringVar(&discordWebhookFlag, "discord-webhook", "", "Discord Webhook URL for rich channel alerts")
 	rootCmd.Flags().StringVar(&slackWebhookFlag, "slack-webhook", "", "Slack Incoming Webhook URL for channel alerts")
 	rootCmd.Flags().StringVar(&genericWebhookFlag, "generic-webhook", "", "Generic HTTP POST Webhook URL for custom alert ingestion")
-	rootCmd.Flags().StringVar(&telegramTokenFlag, "telegram-token", "", "Telegram Bot API Token (e.g. 123456789:ABCDef...)")
-	rootCmd.Flags().StringVar(&telegramChatFlag, "telegram-chat", "", "Telegram Channel or Group Chat ID to send alerts to")
+	rootCmd.Flags().StringVar(&telegramTokenFlag, "telegram-token", "", "Telegram Bot API Token")
+	rootCmd.Flags().StringVar(&telegramChatFlag, "telegram-chat", "", "Telegram Channel or Group Chat ID")
 	rootCmd.Flags().DurationVarP(&pollingIntervalFlag, "interval", "i", 60*time.Second, "Polling interval to check for calendar updates")
 	rootCmd.Flags().DurationVarP(&leadTimeFlag, "lead-time", "l", 15*time.Minute, "Lead time to send alert before the event release")
 	rootCmd.Flags().StringVar(&minImpactFlag, "min-impact", "High", "Minimum impact level to alert (High, Medium, Low)")
@@ -65,22 +64,20 @@ func main() {
 }
 
 func executeNotifier() {
-	// Validate endpoints
-	if discordWebhookFlag == "" && (telegramTokenFlag == "" || telegramChatFlag == "") {
-		log.Fatalf("Error: You must configure at least one notification endpoint (--discord-webhook or --telegram-token & --telegram-chat)")
+	if discordWebhookFlag == "" && (telegramTokenFlag == "" || telegramChatFlag == "") && slackWebhookFlag == "" && genericWebhookFlag == "" {
+		log.Fatalf("Error: You must configure at least one notification endpoint (--discord-webhook, --telegram-token/chat, --slack-webhook, or --generic-webhook)")
 	}
 
-	// Map minimum impact
-	minImpact := forexfactory.ImpactHigh
+	minImpact := forexcalendar.ImpactHigh
 	switch strings.ToLower(minImpactFlag) {
 	case "medium":
-		minImpact = forexfactory.ImpactMedium
+		minImpact = forexcalendar.ImpactMedium
 	case "low":
-		minImpact = forexfactory.ImpactLow
+		minImpact = forexcalendar.ImpactLow
 	}
 
 	fmt.Println("\033[1;36m================================================================================\033[0m")
-	fmt.Println("\033[1;35m  FOREX FACTORY REAL-TIME NEWS ALERTS DAEMON STARTED  \033[0m")
+	fmt.Println("\033[1;35m  FOREX CALENDAR REAL-TIME NEWS ALERTS DAEMON STARTED  \033[0m")
 	fmt.Printf("  • Polling Interval : %v\n", pollingIntervalFlag)
 	fmt.Printf("  • Notification Lead: %v\n", leadTimeFlag)
 	fmt.Printf("  • Minimum Impact   : %s\n", minImpactFlag)
@@ -93,26 +90,20 @@ func executeNotifier() {
 	fmt.Println("\033[1;36m================================================================================\033[0m")
 	fmt.Println("Listening for upcoming high-volatility events... Press Ctrl+C to terminate.")
 
-	// Instantiate standard client forcing UTC alignment
-	client := forexfactory.NewClient(
-		forexfactory.WithTimeLocation(time.UTC),
+	client := forexcalendar.NewClient(
+		forexcalendar.WithTimeLocation(time.UTC),
 	)
 	defer client.Close()
 
-	// Load previously notified events cache to prevent duplicate alerts on restart
 	loadNotifiedCache()
-
-	// Clean cache worker to prevent memory bloat over days
 	go runCacheCleaner()
 
-	// Capture interrupt signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	ticker := time.NewTicker(pollingIntervalFlag)
 	defer ticker.Stop()
 
-	// Run initial check
 	checkAndAlert(client, minImpact)
 
 	for {
@@ -126,8 +117,8 @@ func executeNotifier() {
 	}
 }
 
-func checkAndAlert(client *forexfactory.Client, minImpact forexfactory.Impact) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+func checkAndAlert(client *forexcalendar.Client, minImpact forexcalendar.Impact) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	events, err := client.FetchLiveFeed(ctx)
@@ -140,20 +131,14 @@ func checkAndAlert(client *forexfactory.Client, minImpact forexfactory.Impact) {
 	alertThreshold := now.Add(leadTimeFlag)
 
 	for _, e := range events {
-		// Filter out based on impact importance
 		if !isImpactAllowed(e.Impact, minImpact) {
 			continue
 		}
-
-		// Skip all day or tentative events since they do not have a concrete hourly release
 		if e.IsAllDay || e.IsTentative {
 			continue
 		}
 
-		// Target release time
 		releaseTime := e.Date.UTC()
-
-		// Generate a unique cache key based on timestamp, currency, and title
 		cacheKey := fmt.Sprintf("%d-%s-%s", releaseTime.Unix(), e.Currency, strings.ToLower(e.Title))
 
 		cacheMu.Lock()
@@ -164,9 +149,7 @@ func checkAndAlert(client *forexfactory.Client, minImpact forexfactory.Impact) {
 			continue
 		}
 
-		// Trigger alert if event is in the upcoming window: now <= releaseTime <= alertThreshold
 		if (releaseTime.After(now) || releaseTime.Equal(now)) && (releaseTime.Before(alertThreshold) || releaseTime.Equal(alertThreshold)) {
-			// Alert upcoming event
 			minutesRemaining := int(releaseTime.Sub(now).Minutes())
 			fmt.Printf("[%s] Upcoming Event Alert in %d minutes: %s | %s | %s\n",
 				time.Now().Format("15:04:05"), minutesRemaining, e.Currency, string(e.Impact), e.Title)
@@ -174,47 +157,38 @@ func checkAndAlert(client *forexfactory.Client, minImpact forexfactory.Impact) {
 			var wg sync.WaitGroup
 			if discordWebhookFlag != "" {
 				wg.Add(1)
-				go func(event forexfactory.Event, rem int) {
+				go func(event forexcalendar.Event, rem int) {
 					defer wg.Done()
-					if err := sendDiscordAlert(event, rem); err != nil {
-						log.Printf("Discord Alert failed: %v", err)
-					}
+					_ = sendDiscordAlert(event, rem)
 				}(e, minutesRemaining)
 			}
 
 			if slackWebhookFlag != "" {
 				wg.Add(1)
-				go func(event forexfactory.Event, rem int) {
+				go func(event forexcalendar.Event, rem int) {
 					defer wg.Done()
-					if err := sendSlackAlert(event, rem); err != nil {
-						log.Printf("Slack Alert failed: %v", err)
-					}
+					_ = sendSlackAlert(event, rem)
 				}(e, minutesRemaining)
 			}
 
 			if genericWebhookFlag != "" {
 				wg.Add(1)
-				go func(event forexfactory.Event, rem int) {
+				go func(event forexcalendar.Event, rem int) {
 					defer wg.Done()
-					if err := sendGenericWebhookAlert(event, rem); err != nil {
-						log.Printf("Generic Webhook Alert failed: %v", err)
-					}
+					_ = sendGenericWebhookAlert(event, rem)
 				}(e, minutesRemaining)
 			}
 
 			if telegramTokenFlag != "" && telegramChatFlag != "" {
 				wg.Add(1)
-				go func(event forexfactory.Event, rem int) {
+				go func(event forexcalendar.Event, rem int) {
 					defer wg.Done()
-					if err := sendTelegramAlert(event, rem); err != nil {
-						log.Printf("Telegram Alert failed: %v", err)
-					}
+					_ = sendTelegramAlert(event, rem)
 				}(e, minutesRemaining)
 			}
 
 			wg.Wait()
 
-			// Add to cache to prevent duplicate fires
 			cacheMu.Lock()
 			notifiedCache[cacheKey] = releaseTime
 			cacheMu.Unlock()
@@ -224,14 +198,14 @@ func checkAndAlert(client *forexfactory.Client, minImpact forexfactory.Impact) {
 	}
 }
 
-func isImpactAllowed(imp forexfactory.Impact, min forexfactory.Impact) bool {
-	weight := func(i forexfactory.Impact) int {
+func isImpactAllowed(imp forexcalendar.Impact, min forexcalendar.Impact) bool {
+	weight := func(i forexcalendar.Impact) int {
 		switch i {
-		case forexfactory.ImpactHigh:
+		case forexcalendar.ImpactHigh:
 			return 3
-		case forexfactory.ImpactMedium:
+		case forexcalendar.ImpactMedium:
 			return 2
-		case forexfactory.ImpactLow:
+		case forexcalendar.ImpactLow:
 			return 1
 		default:
 			return 0
@@ -247,7 +221,6 @@ func runCacheCleaner() {
 		cacheMu.Lock()
 		changed := false
 		for key, releaseTime := range notifiedCache {
-			// Evict events that passed more than 1 hour ago
 			if now.Sub(releaseTime) > 1*time.Hour {
 				delete(notifiedCache, key)
 				changed = true
@@ -266,7 +239,7 @@ func getNotifierCacheFilePath() string {
 	if err != nil {
 		cacheDir = os.TempDir()
 	}
-	dir := filepath.Join(cacheDir, "forexfactory-go")
+	dir := filepath.Join(cacheDir, "forexcalendar-go")
 	_ = os.MkdirAll(dir, 0700)
 	return filepath.Join(dir, "notified_cache.json")
 }
@@ -286,7 +259,6 @@ func loadNotifiedCache() {
 		return
 	}
 
-	// Convert loaded string times back to time.Time
 	for k, v := range tempMap {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			notifiedCache[k] = t
@@ -316,17 +288,17 @@ var webhookHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
 }
 
-func sendDiscordAlert(e forexfactory.Event, minutesLeft int) error {
+func sendDiscordAlert(e forexcalendar.Event, minutesLeft int) error {
 	color := 9807270 // Gray
 	emoji := "⚪"
 	switch e.Impact {
-	case forexfactory.ImpactHigh:
+	case forexcalendar.ImpactHigh:
 		color = 15158332 // Red
 		emoji = "🔴"
-	case forexfactory.ImpactMedium:
+	case forexcalendar.ImpactMedium:
 		color = 15105570 // Orange
 		emoji = "🟡"
-	case forexfactory.ImpactLow:
+	case forexcalendar.ImpactLow:
 		color = 3066993 // Green
 		emoji = "🟢"
 	}
@@ -347,7 +319,7 @@ func sendDiscordAlert(e forexfactory.Event, minutesLeft int) error {
 					{"name": "Previous value", "value": getValOrDash(e.Previous), "inline": true},
 				},
 				"footer": map[string]string{
-					"text": "ForexFactory Go SDK • Alerts",
+					"text": "ForexCalendar Go SDK • Alerts",
 				},
 				"timestamp": time.Now().UTC().Format(time.RFC3339),
 			},
@@ -372,14 +344,14 @@ func sendDiscordAlert(e forexfactory.Event, minutesLeft int) error {
 	return nil
 }
 
-func sendTelegramAlert(e forexfactory.Event, minutesLeft int) error {
+func sendTelegramAlert(e forexcalendar.Event, minutesLeft int) error {
 	emoji := "⚪"
 	switch e.Impact {
-	case forexfactory.ImpactHigh:
+	case forexcalendar.ImpactHigh:
 		emoji = "🔴"
-	case forexfactory.ImpactMedium:
+	case forexcalendar.ImpactMedium:
 		emoji = "🟡"
-	case forexfactory.ImpactLow:
+	case forexcalendar.ImpactLow:
 		emoji = "🟢"
 	}
 
@@ -392,7 +364,7 @@ func sendTelegramAlert(e forexfactory.Event, minutesLeft int) error {
 			"• *Impact Level:* %s\n"+
 			"• *Analyst Forecast:* %s\n"+
 			"• *Previous Value:* %s\n\n"+
-			"_Powered by forexfactory-go_",
+			"_Powered by forexcalendar-go_",
 		emoji,
 		escapeMarkdown(e.Title),
 		minutesLeft,
@@ -423,14 +395,14 @@ func sendTelegramAlert(e forexfactory.Event, minutesLeft int) error {
 	return nil
 }
 
-func sendSlackAlert(e forexfactory.Event, minutesLeft int) error {
+func sendSlackAlert(e forexcalendar.Event, minutesLeft int) error {
 	emoji := ":white_circle:"
 	switch e.Impact {
-	case forexfactory.ImpactHigh:
+	case forexcalendar.ImpactHigh:
 		emoji = ":red_circle:"
-	case forexfactory.ImpactMedium:
+	case forexcalendar.ImpactMedium:
 		emoji = ":large_orange_circle:"
-	case forexfactory.ImpactLow:
+	case forexcalendar.ImpactLow:
 		emoji = ":large_green_circle:"
 	}
 
@@ -481,12 +453,12 @@ func sendSlackAlert(e forexfactory.Event, minutesLeft int) error {
 	return nil
 }
 
-func sendGenericWebhookAlert(e forexfactory.Event, minutesLeft int) error {
+func sendGenericWebhookAlert(e forexcalendar.Event, minutesLeft int) error {
 	payload := map[string]interface{}{
 		"event":        e,
 		"minutes_left": minutesLeft,
 		"timestamp":    time.Now().UTC().Unix(),
-		"source":       "forexfactory-go",
+		"source":       "forexcalendar-go",
 	}
 
 	body, err := json.Marshal(payload)

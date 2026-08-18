@@ -1,10 +1,9 @@
-package forexfactory
+package forexcalendar
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/xuri/excelize/v2"
@@ -72,9 +71,9 @@ func WriteExcel(events []Event, filePath string) error {
 	})
 
 	headers := []string{
-		"ID", "Title", "Currency", "Date (UTC)", "Impact",
-		"Forecast", "Previous", "Actual", "Deviation", "Market Bias",
-		"All Day", "Tentative",
+		"ID", "Title", "Country", "Currency", "Date (UTC)", "Impact",
+		"Forecast", "Previous", "Actual", "Unit", "Deviation", "Market Bias",
+		"Category", "Source",
 	}
 
 	for colIdx, h := range headers {
@@ -98,39 +97,41 @@ func WriteExcel(events []Event, filePath string) error {
 
 		_ = f.SetCellValue(sheetName, fmt.Sprintf("A%d", row), e.ID)
 		_ = f.SetCellValue(sheetName, fmt.Sprintf("B%d", row), e.Title)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("C%d", row), e.Currency)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("D%d", row), e.Date.UTC().Format(time.RFC3339))
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("E%d", row), string(e.Impact))
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("F%d", row), e.Forecast)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("G%d", row), e.Previous)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("H%d", row), e.Actual)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("I%d", row), devStr)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("J%d", row), bias)
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("K%d", row), strconv.FormatBool(e.IsAllDay))
-		_ = f.SetCellValue(sheetName, fmt.Sprintf("L%d", row), strconv.FormatBool(e.IsTentative))
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("C%d", row), e.Country)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("D%d", row), e.Currency)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("E%d", row), e.Date.UTC().Format(time.RFC3339))
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("F%d", row), string(e.Impact))
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("G%d", row), e.Forecast)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("H%d", row), e.Previous)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("I%d", row), e.Actual)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("J%d", row), e.Unit)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("K%d", row), devStr)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("L%d", row), bias)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("M%d", row), e.Category)
+		_ = f.SetCellValue(sheetName, fmt.Sprintf("N%d", row), e.Source)
 
 		// Center align some columns
-		_ = f.SetCellStyle(sheetName, fmt.Sprintf("C%d", row), fmt.Sprintf("C%d", row), centerStyle)
-		_ = f.SetCellStyle(sheetName, fmt.Sprintf("I%d", row), fmt.Sprintf("J%d", row), centerStyle)
+		_ = f.SetCellStyle(sheetName, fmt.Sprintf("C%d", row), fmt.Sprintf("D%d", row), centerStyle)
+		_ = f.SetCellStyle(sheetName, fmt.Sprintf("K%d", row), fmt.Sprintf("L%d", row), centerStyle)
 
 		// Apply Impact color styling
 		switch e.Impact {
 		case ImpactHigh:
-			_ = f.SetCellStyle(sheetName, fmt.Sprintf("E%d", row), fmt.Sprintf("E%d", row), highImpactStyle)
+			_ = f.SetCellStyle(sheetName, fmt.Sprintf("F%d", row), fmt.Sprintf("F%d", row), highImpactStyle)
 		case ImpactMedium:
-			_ = f.SetCellStyle(sheetName, fmt.Sprintf("E%d", row), fmt.Sprintf("E%d", row), mediumImpactStyle)
+			_ = f.SetCellStyle(sheetName, fmt.Sprintf("F%d", row), fmt.Sprintf("F%d", row), mediumImpactStyle)
 		case ImpactLow:
-			_ = f.SetCellStyle(sheetName, fmt.Sprintf("E%d", row), fmt.Sprintf("E%d", row), lowImpactStyle)
+			_ = f.SetCellStyle(sheetName, fmt.Sprintf("F%d", row), fmt.Sprintf("F%d", row), lowImpactStyle)
 		default:
-			_ = f.SetCellStyle(sheetName, fmt.Sprintf("E%d", row), fmt.Sprintf("E%d", row), centerStyle)
+			_ = f.SetCellStyle(sheetName, fmt.Sprintf("F%d", row), fmt.Sprintf("F%d", row), centerStyle)
 		}
 	}
 
-	// Auto-fit column widths roughly
+	// Auto-fit column widths
 	colWidths := map[string]float64{
-		"A": 12, "B": 38, "C": 10, "D": 22, "E": 12,
-		"F": 12, "G": 12, "H": 12, "I": 12, "J": 14,
-		"K": 10, "L": 12,
+		"A": 10, "B": 35, "C": 8, "D": 8, "E": 22, "F": 10,
+		"G": 10, "H": 10, "I": 10, "J": 8, "K": 10, "L": 12,
+		"M": 10, "N": 25,
 	}
 	for col, width := range colWidths {
 		_ = f.SetColWidth(sheetName, col, col, width)

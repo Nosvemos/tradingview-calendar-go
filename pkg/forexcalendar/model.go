@@ -1,4 +1,4 @@
-package forexfactory
+package forexcalendar
 
 import (
 	"fmt"
@@ -11,9 +11,9 @@ import (
 type Impact string
 
 const (
-	// ImpactHigh indicates a major market-moving event (e.g. Interest Rate Decision).
+	// ImpactHigh indicates a major market-moving event (e.g. Interest Rate Decision, CPI, NFP).
 	ImpactHigh Impact = "High"
-	// ImpactMedium indicates a moderate market-moving event.
+	// ImpactMedium indicates a moderate market-moving event (e.g. PMI, Retail Sales).
 	ImpactMedium Impact = "Medium"
 	// ImpactLow indicates a low market-moving event.
 	ImpactLow Impact = "Low"
@@ -21,49 +21,64 @@ const (
 	ImpactNone Impact = "None"
 )
 
-// Event represents an economic calendar event scraped from Forex Factory.
+// Event represents an economic calendar event.
 type Event struct {
-	// ID is the unique identifier for the event details page (parsed from detail URL).
+	// ID is the unique identifier for the event.
 	ID string `json:"id,omitempty"`
-	// Title is the name of the economic news event (e.g., "CPI m/m").
+	// Title is the name of the economic news event (e.g., "CPI YoY", "Non-Farm Payrolls").
 	Title string `json:"title"`
-	// Currency is the currency code affected (e.g., "USD", "EUR", "GBP").
+	// Country is the ISO country code (e.g., "US", "EU", "GB", "JP", "AU", "DE", "TR").
+	Country string `json:"country,omitempty"`
+	// Currency is the currency code affected (e.g., "USD", "EUR", "GBP", "JPY", "TRY").
 	Currency string `json:"currency"`
-	// Date represents the start time of the event.
+	// Date represents the exact scheduled release timestamp in UTC.
 	Date time.Time `json:"date"`
-	// Impact is the volatility threat classification.
+	// Impact is the volatility classification (High, Medium, Low, None).
 	Impact Impact `json:"impact"`
-	// Forecast is the analyst consensus estimate.
+	// Forecast is the analyst consensus estimate formatted as a string (e.g., "2.5%").
 	Forecast string `json:"forecast"`
-	// Previous is the value of the previous release (possibly revised).
+	// Previous is the value of the previous release (e.g., "2.3%").
 	Previous string `json:"previous"`
-	// Actual is the final published value.
+	// Actual is the final published value (e.g., "2.6%").
 	Actual string `json:"actual"`
+	// Unit is the measurement unit (e.g. "%", "K", "M", "B", "Index").
+	Unit string `json:"unit,omitempty"`
+	// Indicator is the standardized economic indicator name.
+	Indicator string `json:"indicator,omitempty"`
+	// Category is the macroeconomic category code (e.g., "prce", "cnsm", "labr", "gdp").
+	Category string `json:"category,omitempty"`
+	// Period is the reference time period (e.g. "Nov", "Q3").
+	Period string `json:"period,omitempty"`
+	// Comment provides detailed macroeconomic context and definition.
+	Comment string `json:"comment,omitempty"`
+	// Source is the reporting organization or government agency.
+	Source string `json:"source,omitempty"`
+	// SourceURL is the official link to the reporting agency.
+	SourceURL string `json:"source_url,omitempty"`
+	// Ticker is the financial ticker symbol if available.
+	Ticker string `json:"ticker,omitempty"`
 	// IsAllDay is true if the event has no fixed hour and lasts the whole day (e.g., Bank Holiday).
 	IsAllDay bool `json:"is_all_day"`
-	// IsTentative is true if the event time is not finalized (e.g. Tentative OPEC meetings).
+	// IsTentative is true if the event time is not finalized.
 	IsTentative bool `json:"is_tentative"`
 }
 
 // ParseActual returns the Actual value parsed into a float64.
-// It handles negative numbers, thousands/millions/billions multipliers (K, M, B), and strips percent/comma symbols.
 func (e Event) ParseActual() (float64, error) {
 	return ParseFloat(e.Actual)
 }
 
 // ParseForecast returns the Forecast value parsed into a float64.
-// It handles negative numbers, thousands/millions/billions multipliers (K, M, B), and strips percent/comma symbols.
 func (e Event) ParseForecast() (float64, error) {
 	return ParseFloat(e.Forecast)
 }
 
 // ParsePrevious returns the Previous value parsed into a float64.
-// It handles negative numbers, thousands/millions/billions multipliers (K, M, B), and strips percent/comma symbols.
 func (e Event) ParsePrevious() (float64, error) {
 	return ParseFloat(e.Previous)
 }
 
-// Deviation returns (Actual - Forecast) as a float64. Returns an error if either value is not parseable.
+// Deviation returns (Actual - Forecast) as a float64.
 func (e Event) Deviation() (float64, error) {
 	actual, err := e.ParseActual()
 	if err != nil {
@@ -121,29 +136,6 @@ func (e Event) MarketBias() string {
 	return "Bearish"
 }
 
-// EventDetail represents rich deep-dive specifications and historical release records for an event.
-type EventDetail struct {
-	ID             string               `json:"id"`
-	Title          string               `json:"title"`
-	Currency       string               `json:"currency"`
-	Source         string               `json:"source,omitempty"`
-	Measures       string               `json:"measures,omitempty"`
-	UsualEffect    string               `json:"usual_effect,omitempty"`
-	Frequency      string               `json:"frequency,omitempty"`
-	NextRelease    string               `json:"next_release,omitempty"`
-	WhyTradersCare string               `json:"why_traders_care,omitempty"`
-	History        []EventHistoryRecord `json:"history,omitempty"`
-}
-
-// EventHistoryRecord represents a past release entry in the event's history table.
-type EventHistoryRecord struct {
-	Date     time.Time `json:"date"`
-	Actual   string    `json:"actual"`
-	Forecast string    `json:"forecast"`
-	Previous string    `json:"previous"`
-	Revised  string    `json:"revised,omitempty"`
-}
-
 // ParseFloat is a utility function that parses standard economic calendar values (e.g., "-0.5%", "120K", "1.2M", "1,500.50", "−0.4%", "<0.1%", "€10.5M")
 // into a standardized float64 value.
 func ParseFloat(val string) (float64, error) {
@@ -184,7 +176,6 @@ func ParseFloat(val string) (float64, error) {
 	lowerVal := strings.ToLower(val)
 
 	if strings.HasSuffix(lowerVal, "%") {
-		// Strip percent symbol but keep scale as 1.0 (standard for calendar stats)
 		val = val[:len(val)-1]
 	} else if strings.HasSuffix(lowerVal, "k") {
 		multiplier = 1000.0

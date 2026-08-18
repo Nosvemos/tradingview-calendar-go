@@ -11,18 +11,18 @@ except ImportError:
     HAS_PANDAS = False
 
 
-class ForexFactoryClient:
+class ForexCalendarClient:
     """
-    ForexFactoryClient wraps the high-performance Go forexfactory-go library
-    using ctypes C-bindings, providing sub-second historical scrapes and live trackers
+    ForexCalendarClient wraps the high-performance Go forexcalendar-go library
+    using ctypes C-bindings, providing sub-second historical range downloads and live trackers
     directly to Python and Pandas workflows.
     """
     
-    def __init__(self, dll_path=None, user_agent=None, proxy_url=None, rate_limit=1, concurrency=3, timezone=None, impacts=None):
+    def __init__(self, dll_path=None, user_agent=None, proxy_url=None, rate_limit=10, concurrency=5, timezone=None, impacts=None, currencies=None, countries=None):
         """
         Initializes the client.
         
-        :param dll_path: Path to libforexfactory.dll / libforexfactory.so. 
+        :param dll_path: Path to libforexcalendar.dll / libforexcalendar.so. 
                          If None, searches the current directory and parent directory.
         :param user_agent: Custom User-Agent string.
         :param proxy_url: Custom Proxy URL (HTTP/SOCKS5).
@@ -30,22 +30,24 @@ class ForexFactoryClient:
         :param concurrency: Number of concurrent downloader workers.
         :param timezone: Target timezone (e.g. 'UTC', 'America/New_York').
         :param impacts: List of impacts to filter (e.g., ['High', 'Medium']).
+        :param currencies: List of currencies to filter (e.g., ['USD', 'EUR']).
+        :param countries: List of ISO countries to filter (e.g., ['US', 'EU']).
         """
         if dll_path is None:
-            # Autodetect shared library name based on OS
             system = platform.system().lower()
             if system == 'windows':
-                lib_name = 'libforexfactory.dll'
+                lib_name = 'libforexcalendar.dll'
             elif system == 'darwin':
-                lib_name = 'libforexfactory.dylib'
+                lib_name = 'libforexcalendar.dylib'
             else:
-                lib_name = 'libforexfactory.so'
+                lib_name = 'libforexcalendar.so'
             
-            # Search paths
             search_paths = [
                 os.path.join(os.getcwd(), lib_name),
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', lib_name),
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), lib_name),
+                os.path.join(os.getcwd(), 'libforexfactory.dll'),
+                os.path.join(os.getcwd(), 'libforexfactory.so'),
             ]
             
             for path in search_paths:
@@ -59,10 +61,8 @@ class ForexFactoryClient:
                     f"and provide the direct `dll_path` argument."
                 )
 
-        # Load shared library
         self.lib = ctypes.CDLL(dll_path)
         
-        # Configure ctypes function signatures
         self.lib.InitClient.argtypes = [ctypes.c_char_p]
         self.lib.InitClient.restype = ctypes.c_longlong
         
@@ -82,22 +82,21 @@ class ForexFactoryClient:
         self.lib.FreeString.argtypes = [ctypes.c_void_p]
         self.lib.FreeString.restype = None
 
-        # Build configurations payload
         config = {
             "user_agent": user_agent or "",
             "proxy_url": proxy_url or "",
             "rate_limit": rate_limit,
             "concurrency": concurrency,
             "timezone": timezone or "",
-            "impacts": impacts or []
+            "impacts": impacts or [],
+            "currencies": currencies or [],
+            "countries": countries or []
         }
         
         config_bytes = json.dumps(config).encode('utf-8')
-        
-        # Instantiate Go Client and store opaque handle
         self.handle = self.lib.InitClient(config_bytes)
         if self.handle <= 0:
-            raise RuntimeError("Failed to initialize Go ForexFactory Client via CGO bindings.")
+            raise RuntimeError("Failed to initialize Go ForexCalendar Client via CGO bindings.")
 
     def _to_dataframe_or_list(self, data, as_dataframe: bool):
         if as_dataframe:
@@ -112,10 +111,6 @@ class ForexFactoryClient:
     def fetch_week(self, date: datetime, as_dataframe: bool = False):
         """
         Fetches calendar events for the week containing the specified date.
-        
-        :param date: datetime object.
-        :param as_dataframe: If True, returns Pandas DataFrame.
-        :return: List of events or DataFrame.
         """
         ts = int(date.timestamp())
         res_ptr = self.lib.FetchWeekJSON(self.handle, ts)
@@ -134,11 +129,6 @@ class ForexFactoryClient:
     def fetch_range(self, start_date: datetime, end_date: datetime, as_dataframe: bool = True):
         """
         Fetches calendar events concurrently spanning the range between start_date and end_date.
-        
-        :param start_date: datetime object.
-        :param end_date: datetime object.
-        :param as_dataframe: If True, returns a structured Pandas DataFrame. If False, returns raw JSON list.
-        :return: List of dicts or Pandas DataFrame.
         """
         start_ts = int(start_date.timestamp())
         end_ts = int(end_date.timestamp())
@@ -158,10 +148,7 @@ class ForexFactoryClient:
 
     def fetch_live_feed(self, as_dataframe: bool = False):
         """
-        Fetches real-time calendar events from the live weekly XML feed.
-        
-        :param as_dataframe: If True, returns Pandas DataFrame.
-        :return: List of dicts or Pandas DataFrame.
+        Fetches real-time calendar events from the live feed.
         """
         if not hasattr(self.lib, 'FetchLiveFeedJSON'):
             raise NotImplementedError("FetchLiveFeedJSON is not available in the compiled shared library.")
@@ -181,7 +168,7 @@ class ForexFactoryClient:
 
     def close(self):
         """
-        Closes the client and safely frees all browser resources.
+        Closes the client and frees resources.
         """
         if hasattr(self, 'lib') and self.lib is not None and hasattr(self, 'handle') and self.handle > 0:
             self.lib.FreeClient(self.handle)

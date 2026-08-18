@@ -1,4 +1,4 @@
-package forexfactory
+package forexcalendar
 
 import (
 	"fmt"
@@ -12,16 +12,23 @@ import (
 )
 
 // ParquetEvent represents the flat structural schema designed to map
-// Forex Factory Event structures to Apache Parquet columnar storage.
+// Event structures to Apache Parquet columnar storage.
 type ParquetEvent struct {
 	ID          string `parquet:"name=id, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Title       string `parquet:"name=title, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	Country     string `parquet:"name=country, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Currency    string `parquet:"name=currency, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Date        string `parquet:"name=date, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Impact      string `parquet:"name=impact, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Forecast    string `parquet:"name=forecast, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Previous    string `parquet:"name=previous, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	Actual      string `parquet:"name=actual, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	Unit        string `parquet:"name=unit, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	Category    string `parquet:"name=category, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	Indicator   string `parquet:"name=indicator, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	Comment     string `parquet:"name=comment, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	Source      string `parquet:"name=source, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
+	Ticker      string `parquet:"name=ticker, type=BYTE_ARRAY, convertedtype=UTF8, encoding=PLAIN_DICTIONARY"`
 	IsAllDay    bool   `parquet:"name=is_all_day, type=BOOLEAN"`
 	IsTentative bool   `parquet:"name=is_tentative, type=BOOLEAN"`
 }
@@ -44,7 +51,6 @@ func WriteParquet(filePath string, events []Event) error {
 	}
 	defer pw.WriteStop()
 
-	// Configure Snappy compression for maximum compression and read speed
 	pw.CompressionType = parquet.CompressionCodec_SNAPPY
 	pw.RowGroupSize = 128 * 1024 * 1024 // 128MB
 	pw.PageSize = 8 * 1024              // 8KB
@@ -53,12 +59,19 @@ func WriteParquet(filePath string, events []Event) error {
 		pe := ParquetEvent{
 			ID:          e.ID,
 			Title:       e.Title,
+			Country:     e.Country,
 			Currency:    e.Currency,
 			Date:        e.Date.Format(time.RFC3339),
 			Impact:      string(e.Impact),
 			Forecast:    e.Forecast,
 			Previous:    e.Previous,
 			Actual:      e.Actual,
+			Unit:        e.Unit,
+			Category:    e.Category,
+			Indicator:   e.Indicator,
+			Comment:     e.Comment,
+			Source:      e.Source,
+			Ticker:      e.Ticker,
 			IsAllDay:    e.IsAllDay,
 			IsTentative: e.IsTentative,
 		}
